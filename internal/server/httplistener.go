@@ -131,8 +131,7 @@ func peekHTTPHost(conn net.Conn) (headerBytes []byte, host string, err error) {
 	var buf bytes.Buffer
 	var hostVal string
 
-	for i := range 128 {
-		_ = i
+	for range 128 {
 		line, err := br.ReadSlice('\n')
 		buf.Write(line)
 		if err != nil {

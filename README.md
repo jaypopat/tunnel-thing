@@ -11,23 +11,26 @@ Supports two routing modes: raw TCP on a port, or subdomain-based HTTP routing.
 Server:
 
 ```sh
-just run-server -- -listen :7000
-just run-server -- -listen :7000 -tokens tokens.txt -http :8080 -domain tunnel.example.com
+# open mode (no auth)
+bin/server -listen :7000
+
+# with auth + subdomain routing
+bin/server -listen :7000 -secret mysecret -http :80 -domain tunnel.example.com
 ```
 
 Client:
 
 ```sh
 # expose local :3000 on remote port 9001
-just run-client -- -server host:7000 -token mytoken -local localhost:3000 -remote 9001
+bin/client -server host:7000 -secret mysecret -local localhost:3000 -remote 9001
 
-# or via subdomain: myapp.tunnel.example.com -> localhost:3000
-just run-client -- -server host:7000 -token mytoken -local localhost:3000 -name myapp
+# or via subdomain: myapp.tunnel.example.com → localhost:3000
+bin/client -server host:7000 -secret mysecret -local localhost:3000 -name myapp
 ```
 
 ## Auth
 
-Optional. Pass `-tokens` to the server with a file of `token:label` pairs, one per line. Without it, everything is allowed through.
+Optional. Pass the same `-secret` value to both server and client. Without it, all connections are accepted.
 
 ## Build
 
