@@ -18,6 +18,8 @@ bin/server -listen :7000
 bin/server -listen :7000 -secret mysecret -http :80 -domain tunnel.example.com
 ```
 
+Both server and client accept `-v` for verbose (debug-level) logging.
+
 Client (flags):
 
 ```sh
@@ -38,6 +40,8 @@ Client (TOML config):
 ```sh
 bin/client -config config.toml
 ```
+
+If no `-tunnel` or `-config` flags are given, the client automatically looks for a `config.toml` in the current directory.
 
 ```toml
 server = "host:7000"

@@ -105,7 +105,7 @@ func configFromFlags(serverAddr, secret string, tunnels tunnelFlags) (client.Con
 		var spec client.TunnelSpec
 		spec.LocalAddr = right
 
-		if port, err := strconv.ParseUint(left, 10, 16); err == nil {
+		if port, err := strconv.ParseUint(left, 10, 16); err == nil && port > 0 {
 			spec.RemotePort = uint16(port)
 		} else {
 			spec.Name = left

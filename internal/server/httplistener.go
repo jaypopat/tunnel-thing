@@ -94,7 +94,7 @@ func (h *HTTPListener) handleConn(conn net.Conn) {
 		return
 	}
 
-	tunnelID := fmt.Sprintf("t-%s-%s", sess.clientID, subdomain)
+	tunnelID := nameTunnelID(sess.clientID, subdomain)
 	replayConn := &prefixConn{
 		Reader: io.MultiReader(bytes.NewReader(header), conn),
 		Conn:   conn,
@@ -106,8 +106,8 @@ func (h *HTTPListener) handleConn(conn net.Conn) {
 
 // extractSubdomain: "myapp.tunnel.dev" → "myapp", "myapp.tunnel.dev:8080" → "myapp"
 func (h *HTTPListener) extractSubdomain(host string) (string, error) {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		host = hostname
 	}
 
 	if !strings.HasSuffix(host, h.domainSuffix) {

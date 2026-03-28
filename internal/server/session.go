@@ -20,6 +20,14 @@ type tunnel struct {
 	cancel   context.CancelFunc
 }
 
+func nameTunnelID(clientID, name string) string {
+	return fmt.Sprintf("t-%s-%s", clientID, name)
+}
+
+func portTunnelID(clientID string, port uint16) string {
+	return fmt.Sprintf("t-%s-%d", clientID, port)
+}
+
 type session struct {
 	clientID      string
 	yamux         *yamux.Session
@@ -83,7 +91,7 @@ func (s *session) handleTunnelRequest(ctx context.Context, raw []byte) {
 }
 
 func (s *session) handleNameTunnel(req proto.TunnelRequest) {
-	tunnelID := fmt.Sprintf("t-%s-%s", s.clientID, req.Name)
+	tunnelID := nameTunnelID(s.clientID, req.Name)
 
 	if err := s.router.Register(req.Name, s); err != nil {
 		s.log.Warn("subdomain registration failed", "name", req.Name, "err", err)
@@ -116,23 +124,23 @@ func (s *session) handleNameTunnel(req proto.TunnelRequest) {
 }
 
 func (s *session) handlePortTunnel(ctx context.Context, req proto.TunnelRequest) {
-	port := req.RequestedPort
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", req.RequestedPort))
 	if err != nil {
-		s.log.Error("listen on public port failed", "port", port, "err", err)
+		s.log.Error("listen on public port failed", "port", req.RequestedPort, "err", err)
 		proto.WriteMessage(s.controlStream, proto.MsgTunnelResponse, proto.TunnelResponse{
 			OK:    false,
-			Error: fmt.Sprintf("cannot listen on port %d: %v", port, err),
+			Error: fmt.Sprintf("cannot listen on port %d: %v", req.RequestedPort, err),
 		})
 		return
 	}
 
-	tunnelID := fmt.Sprintf("t-%s-%d", s.clientID, port)
+	actualPort := uint16(ln.Addr().(*net.TCPAddr).Port)
+	tunnelID := portTunnelID(s.clientID, actualPort)
 	tunnelCtx, tunnelCancel := context.WithCancel(ctx)
 
 	tun := &tunnel{
 		id:       tunnelID,
-		port:     port,
+		port:     actualPort,
 		listener: ln,
 		cancel:   tunnelCancel,
 	}
@@ -141,12 +149,12 @@ func (s *session) handlePortTunnel(ctx context.Context, req proto.TunnelRequest)
 	s.tunnels[tunnelID] = tun
 	s.mu.Unlock()
 
-	s.log.Info("tunnel open (port)", "tunnel_id", tunnelID, "port", port)
+	s.log.Info("tunnel open (port)", "tunnel_id", tunnelID, "port", actualPort)
 
 	if err := proto.WriteMessage(s.controlStream, proto.MsgTunnelResponse, proto.TunnelResponse{
 		OK:           true,
 		TunnelID:     tunnelID,
-		AssignedPort: port,
+		AssignedPort: actualPort,
 	}); err != nil {
 		s.log.Error("write tunnel response failed", "err", err)
 		tunnelCancel()
