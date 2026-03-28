@@ -9,15 +9,14 @@ import (
 
 	"github.com/hashicorp/yamux"
 
-	"jaypopat/tunnel-thing/internal/auth"
 	"jaypopat/tunnel-thing/internal/proto"
 )
 
 type Config struct {
 	ListenAddr string
-	HTTPAddr   string // shared HTTP listener for subdomain routing (e.g. ":8080")
-	Domain     string // base domain (e.g. "tunnel.dev")
-	Auth       auth.Authenticator
+	HTTPAddr   string
+	Domain     string
+	Secret     string // shared secret; empty = no auth
 }
 
 type Server struct {
@@ -40,7 +39,6 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	slog.Info("server listening", "addr", ln.Addr())
 
-	// Start the HTTP listener for subdomain routing if configured.
 	if s.cfg.HTTPAddr != "" && s.cfg.Domain != "" {
 		httpLn := NewHTTPListener(s.cfg.HTTPAddr, s.cfg.Domain, s.router)
 		s.wg.Go(func() {
@@ -120,17 +118,17 @@ func (s *Server) authenticate(controlStream net.Conn, remote net.Addr) (string, 
 		return "", false
 	}
 
-	clientID, ok := s.cfg.Auth.Validate(req.Token)
-	if !ok {
+	if s.cfg.Secret != "" && req.Token != s.cfg.Secret {
 		slog.Warn("auth failed", "remote", remote)
 		proto.WriteMessage(controlStream, proto.MsgAuthResponse, proto.AuthResponse{
 			OK:    false,
-			Error: "invalid token",
+			Error: "invalid secret",
 		})
 		return "", false
 	}
 
-	slog.Info("client authenticated", "remote", remote, "client_id", clientID)
+	clientID := remote.String()
+	slog.Info("client authenticated", "remote", remote)
 	proto.WriteMessage(controlStream, proto.MsgAuthResponse, proto.AuthResponse{
 		OK:       true,
 		ClientID: clientID,

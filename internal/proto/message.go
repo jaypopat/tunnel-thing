@@ -9,7 +9,7 @@ import (
 
 const (
 	Version    = 0x01
-	HeaderSize = 6 // 1 version + 1 type + 4 length
+	HeaderSize = 6        // 1 version + 1 type + 4 length
 	MaxPayload = 16 << 20 // 16 MB
 )
 

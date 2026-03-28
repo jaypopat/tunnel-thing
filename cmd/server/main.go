@@ -7,14 +7,13 @@ import (
 	"os"
 	"os/signal"
 
-	goauth "jaypopat/tunnel-thing/internal/auth"
 	"jaypopat/tunnel-thing/internal/server"
 )
 
 func main() {
 	listen := flag.String("listen", ":7000", "address to listen on for client connections")
-	tokenFile := flag.String("tokens", "", "path to token file (token:label per line). If empty, all connections are allowed")
-	httpAddr := flag.String("http", "", "address for shared HTTP listener (e.g. ':8080'). Required for subdomain routing")
+	secret := flag.String("secret", "", "shared secret for client auth (empty = no auth)")
+	httpAddr := flag.String("http", "", "address for shared HTTP listener (e.g. ':8080')")
 	domain := flag.String("domain", "", "base domain for subdomain routing (e.g. 'tunnel.dev')")
 	verbose := flag.Bool("v", false, "verbose logging (debug level)")
 	flag.Parse()
@@ -27,18 +26,8 @@ func main() {
 		Level: level,
 	})))
 
-	var authenticator goauth.Authenticator
-	if *tokenFile != "" {
-		var err error
-		authenticator, err = goauth.NewTokenFileAuth(*tokenFile)
-		if err != nil {
-			slog.Error("failed to load token file", "path", *tokenFile, "err", err)
-			os.Exit(1)
-		}
-		slog.Info("loaded token file", "path", *tokenFile)
-	} else {
-		authenticator = goauth.AllowAll{}
-		slog.Warn("no token file specified — all connections will be accepted")
+	if *secret == "" {
+		slog.Warn("no secret specified — all connections will be accepted")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -48,7 +37,7 @@ func main() {
 		ListenAddr: *listen,
 		HTTPAddr:   *httpAddr,
 		Domain:     *domain,
-		Auth:       authenticator,
+		Secret:     *secret,
 	})
 
 	if err := srv.Run(ctx); err != nil {

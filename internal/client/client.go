@@ -14,7 +14,7 @@ import (
 
 type Config struct {
 	ServerAddr string
-	Token      string
+	Secret     string
 	LocalAddr  string
 	RemotePort uint16 // port-based tunnel (0 if using name)
 	Name       string // subdomain name for HTTP routing (empty if using port)
@@ -112,7 +112,7 @@ func (c *Client) Run(ctx context.Context) error {
 
 func (c *Client) authenticate(controlStream net.Conn) error {
 	if err := proto.WriteMessage(controlStream, proto.MsgAuthRequest, proto.AuthRequest{
-		Token: c.cfg.Token,
+		Token: c.cfg.Secret,
 	}); err != nil {
 		return fmt.Errorf("send auth request: %w", err)
 	}

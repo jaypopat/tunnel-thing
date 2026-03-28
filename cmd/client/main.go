@@ -12,7 +12,7 @@ import (
 
 func main() {
 	serverAddr := flag.String("server", "localhost:7000", "server address")
-	token := flag.String("token", "", "authentication token")
+	secret := flag.String("secret", "", "shared secret for server auth")
 	localAddr := flag.String("local", "localhost:8080", "local service address to tunnel to")
 	remotePort := flag.Uint("remote", 0, "remote port to expose (port-based tunnel)")
 	name := flag.String("name", "", "subdomain name for HTTP routing (e.g. 'myapp')")
@@ -37,7 +37,7 @@ func main() {
 
 	c := client.New(client.Config{
 		ServerAddr: *serverAddr,
-		Token:      *token,
+		Secret:     *secret,
 		LocalAddr:  *localAddr,
 		RemotePort: uint16(*remotePort),
 		Name:       *name,
