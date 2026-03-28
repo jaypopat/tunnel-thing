@@ -1,0 +1,35 @@
+# client config
+
+# tunnel-thing control center thing, the server then exposes connections based on what the client requests?
+server = "localhost:7000" # in prod this would be like server.domain.xyz (port we use for tunnel-thing routing,auth,proxys n all that)
+secret = "s"
+
+# web app
+[[tunnels]]
+name = "myapp"
+local = "localhost:3000"
+
+# api server
+[[tunnels]]
+name = "api"
+local = "localhost:4000"
+
+# postgres
+[[tunnels]]
+port = 5432
+local = "localhost:5432"
+
+# redis
+[[tunnels]]
+port = 6379
+local = "localhost:6379"
+
+# grafana
+[[tunnels]]
+name = "grafana"
+local = "localhost:3001"
+
+# ssh
+[[tunnels]]
+port = 2222
+local = "localhost:22"

@@ -12,16 +12,22 @@ import (
 	"jaypopat/tunnel-thing/internal/proto"
 )
 
+// TunnelSpec defines a single tunnel. Set either Name (subdomain) or RemotePort (TCP), not both.
+type TunnelSpec struct {
+	Name       string `toml:"name"`
+	RemotePort uint16 `toml:"port"`
+	LocalAddr  string `toml:"local"`
+}
+
 type Config struct {
-	ServerAddr string
-	Secret     string
-	LocalAddr  string
-	RemotePort uint16 // port-based tunnel (0 if using name)
-	Name       string // subdomain name for HTTP routing (empty if using port)
+	ServerAddr string       `toml:"server"`
+	Secret     string       `toml:"secret"`
+	Tunnels    []TunnelSpec `toml:"tunnels"`
 }
 
 type Client struct {
-	cfg Config
+	cfg    Config
+	routes map[string]string
 }
 
 func New(cfg Config) *Client {
@@ -61,35 +67,42 @@ func (c *Client) Run(ctx context.Context) error {
 		return err
 	}
 
-	if err := proto.WriteMessage(controlStream, proto.MsgTunnelRequest, proto.TunnelRequest{
-		RequestedPort: c.cfg.RemotePort,
-		Name:          c.cfg.Name,
-	}); err != nil {
-		return fmt.Errorf("send tunnel request: %w", err)
+	c.routes = make(map[string]string)
+
+	for _, spec := range c.cfg.Tunnels {
+		if err := proto.WriteMessage(controlStream, proto.MsgTunnelRequest, proto.TunnelRequest{
+			RequestedPort: spec.RemotePort,
+			Name:          spec.Name,
+		}); err != nil {
+			return fmt.Errorf("send tunnel request: %w", err)
+		}
+
+		msgType, raw, err := proto.ReadMessage(controlStream)
+		if err != nil {
+			return fmt.Errorf("read tunnel response: %w", err)
+		}
+		if msgType != proto.MsgTunnelResponse {
+			return fmt.Errorf("unexpected message type: 0x%02x", msgType)
+		}
+
+		resp, err := proto.Decode[proto.TunnelResponse](raw)
+		if err != nil {
+			return fmt.Errorf("decode tunnel response: %w", err)
+		}
+		if !resp.OK {
+			return fmt.Errorf("tunnel rejected: %s", resp.Error)
+		}
+
+		c.routes[resp.TunnelID] = spec.LocalAddr
+
+		slog.Info("tunnel established",
+			"tunnel_id", resp.TunnelID,
+			"name", resp.Name,
+			"remote_port", resp.AssignedPort,
+			"local_addr", spec.LocalAddr,
+		)
 	}
 
-	msgType, raw, err := proto.ReadMessage(controlStream)
-	if err != nil {
-		return fmt.Errorf("read tunnel response: %w", err)
-	}
-	if msgType != proto.MsgTunnelResponse {
-		return fmt.Errorf("unexpected message type: 0x%02x", msgType)
-	}
-
-	resp, err := proto.Decode[proto.TunnelResponse](raw)
-	if err != nil {
-		return fmt.Errorf("decode tunnel response: %w", err)
-	}
-	if !resp.OK {
-		return fmt.Errorf("tunnel rejected: %s", resp.Error)
-	}
-
-	slog.Info("tunnel established",
-		"tunnel_id", resp.TunnelID,
-		"name", resp.Name,
-		"remote_port", resp.AssignedPort,
-		"local_addr", c.cfg.LocalAddr,
-	)
 	var wg sync.WaitGroup
 	for {
 		stream, err := session.Accept()
@@ -146,16 +159,22 @@ func (c *Client) handleStream(stream net.Conn) {
 		return
 	}
 
-	localConn, err := net.Dial("tcp", c.cfg.LocalAddr)
+	localAddr, ok := c.routes[header.TunnelID]
+	if !ok {
+		slog.Error("unknown tunnel ID", "tunnel_id", header.TunnelID)
+		return
+	}
+
+	localConn, err := net.Dial("tcp", localAddr)
 	if err != nil {
 		slog.Error("dial local service failed",
-			"local_addr", c.cfg.LocalAddr,
+			"local_addr", localAddr,
 			"tunnel_id", header.TunnelID,
 			"err", err,
 		)
 		return
 	}
 
-	slog.Debug("proxying to local", "tunnel_id", header.TunnelID, "local_addr", c.cfg.LocalAddr)
+	slog.Debug("proxying to local", "tunnel_id", header.TunnelID, "local_addr", localAddr)
 	proto.Proxy(stream, localConn)
 }

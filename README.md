@@ -18,14 +18,38 @@ bin/server -listen :7000
 bin/server -listen :7000 -secret mysecret -http :80 -domain tunnel.example.com
 ```
 
-Client:
+Client (flags):
 
 ```sh
-# expose local :3000 on remote port 9001
-bin/client -server host:7000 -secret mysecret -local localhost:3000 -remote 9001
+# subdomain: myapp.tunnel.example.com → localhost:3000
+bin/client -server host:7000 -secret mysecret -tunnel myapp=localhost:3000
 
-# or via subdomain: myapp.tunnel.example.com → localhost:3000
-bin/client -server host:7000 -secret mysecret -local localhost:3000 -name myapp
+# raw TCP: remote port 9001 → localhost:3000
+bin/client -server host:7000 -secret mysecret -tunnel 9001=localhost:3000
+
+# multiple tunnels at once
+bin/client -server host:7000 -secret mysecret \
+  -tunnel myapp=localhost:3000 \
+  -tunnel 5432=localhost:5432
+```
+
+Client (TOML config):
+
+```sh
+bin/client -config config.toml
+```
+
+```toml
+server = "host:7000"
+secret = "mysecret"
+
+[[tunnels]]
+name = "myapp"
+local = "localhost:3000"
+
+[[tunnels]]
+port = 5432
+local = "localhost:5432"
 ```
 
 ## Auth
