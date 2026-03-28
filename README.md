@@ -60,6 +60,30 @@ local = "localhost:5432"
 
 Optional. Pass the same `-secret` value to both server and client. Without it, all connections are accepted.
 
+## HTTPS with Caddy
+
+The server speaks plain HTTP. For automatic HTTPS, put [Caddy](https://caddyserver.com/) in front:
+
+```
+*.tunnel.example.com {
+    reverse_proxy localhost:8080
+    tls {
+        on_demand
+    }
+}
+```
+
+Run the server behind it:
+
+```sh
+bin/server -listen :7000 -http :8080 -domain tunnel.example.com -secret s
+caddy run --config Caddyfile
+```
+
+Caddy auto-provisions Let's Encrypt certificates per subdomain. Your tunnels are now available at `https://myapp.tunnel.example.com`.
+
+Requires a wildcard DNS record (`*.tunnel.example.com`) pointing to your server, and ports 80/443 open for the ACME challenge.
+
 ## Build
 
 ```sh

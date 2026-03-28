@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/hashicorp/yamux"
@@ -21,11 +22,11 @@ type tunnel struct {
 }
 
 func nameTunnelID(clientID, name string) string {
-	return fmt.Sprintf("t-%s-%s", clientID, name)
+	return "t-" + clientID + "-" + name
 }
 
 func portTunnelID(clientID string, port uint16) string {
-	return fmt.Sprintf("t-%s-%d", clientID, port)
+	return "t-" + clientID + "-" + strconv.FormatUint(uint64(port), 10)
 }
 
 type session struct {

@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+var (
+	hostPrefix    = []byte("Host:")
+	headerTermSeq = []byte("\r\n\r\n")
+)
+
 // HTTPListener accepts HTTP connections on a shared port, peeks at the
 // Host header to route to the correct tunnel session, then proxies raw
 // bytes through. L7 routing decision, L4 data path.
@@ -70,37 +75,39 @@ func (h *HTTPListener) handleConn(conn net.Conn) {
 	// Deadline prevents slow/malicious clients from holding goroutines.
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
-	header, host, err := peekHTTPHost(conn)
+	info, err := peekHTTPHost(conn)
 	if err != nil {
 		slog.Debug("failed to parse Host header", "remote", conn.RemoteAddr(), "err", err)
-		fmt.Fprintf(conn, "HTTP/1.1 400 Bad Request\r\nContent-Length: 16\r\n\r\nBad Request.\r\n\r\n")
+		writeHTTPError(conn, "400 Bad Request", "Bad request.\n")
 		return
 	}
 
 	// Clear deadline for the proxy phase — data flows at its own pace.
 	conn.SetReadDeadline(time.Time{})
 
-	subdomain, err := h.extractSubdomain(host)
+	subdomain, err := h.extractSubdomain(info.host)
 	if err != nil {
-		slog.Debug("bad subdomain", "host", host, "err", err)
-		fmt.Fprintf(conn, "HTTP/1.1 404 Not Found\r\nContent-Length: 24\r\n\r\nTunnel not found.\r\n\r\n")
+		slog.Debug("bad subdomain", "host", info.host, "err", err)
+		writeHTTPError(conn, "404 Not Found", "Tunnel not found.\n")
 		return
 	}
 
 	sess, ok := h.router.Lookup(subdomain)
 	if !ok {
 		slog.Debug("no tunnel for subdomain", "subdomain", subdomain)
-		fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 32\r\n\r\nNo tunnel for %s.\r\n\r\n", subdomain)
+		writeHTTPError(conn, "502 Bad Gateway", "No tunnel for "+subdomain+".\n")
 		return
 	}
 
 	tunnelID := nameTunnelID(sess.clientID, subdomain)
+	header := injectProxyHeaders(info.headerBytes, conn.RemoteAddr().String(), info.host)
+
 	replayConn := &prefixConn{
 		Reader: io.MultiReader(bytes.NewReader(header), conn),
 		Conn:   conn,
 	}
 
-	slog.Debug("routing http", "subdomain", subdomain, "client", sess.clientID, "remote", conn.RemoteAddr())
+	slog.Debug("http request", "method", info.method, "path", info.path, "subdomain", subdomain, "remote", conn.RemoteAddr())
 	sess.proxyConnection(tunnelID, replayConn)
 }
 
@@ -122,20 +129,29 @@ func (h *HTTPListener) extractSubdomain(host string) (string, error) {
 	return subdomain, nil
 }
 
-// peekHTTPHost reads HTTP headers from conn, extracts the Host value,
-// and returns all bytes read for replay to the tunnel client.
-func peekHTTPHost(conn net.Conn) (headerBytes []byte, host string, err error) {
+type httpRequestInfo struct {
+	headerBytes []byte
+	host        string
+	method      string
+	path        string
+}
+
+// peekHTTPHost reads HTTP headers from conn, extracts the Host value
+// and request method/path, and returns all bytes read for replay to
+// the tunnel client.
+func peekHTTPHost(conn net.Conn) (info httpRequestInfo, err error) {
 	br := bufio.NewReaderSize(conn, 4096)
 
-	// Scan lines until we find the blank line ending the headers.
 	var buf bytes.Buffer
+	buf.Grow(512)
 	var hostVal string
+	firstLine := true
 
 	for range 128 {
 		line, err := br.ReadSlice('\n')
 		buf.Write(line)
 		if err != nil {
-			return buf.Bytes(), "", fmt.Errorf("read header: %w", err)
+			return httpRequestInfo{headerBytes: buf.Bytes()}, fmt.Errorf("read header: %w", err)
 		}
 
 		trimmed := bytes.TrimRight(line, "\r\n")
@@ -143,15 +159,28 @@ func peekHTTPHost(conn net.Conn) (headerBytes []byte, host string, err error) {
 			break
 		}
 
-		// Case-insensitive check for "Host:" prefix.
-		if len(trimmed) > 5 && (trimmed[0] == 'H' || trimmed[0] == 'h') &&
-			bytes.EqualFold(trimmed[:5], []byte("Host:")) {
+		if firstLine {
+			firstLine = false
+			if i := bytes.IndexByte(trimmed, ' '); i > 0 {
+				info.method = string(trimmed[:i])
+				rest := trimmed[i+1:]
+				if j := bytes.IndexByte(rest, ' '); j > 0 {
+					info.path = string(rest[:j])
+				} else {
+					info.path = string(rest)
+				}
+			}
+		}
+
+		// Case-insensitive check for "Host:" prefix (skip once found).
+		if hostVal == "" && len(trimmed) >= 5 && (trimmed[0] == 'H' || trimmed[0] == 'h') &&
+			bytes.EqualFold(trimmed[:5], hostPrefix) {
 			hostVal = strings.TrimSpace(string(trimmed[5:]))
 		}
 	}
 
 	if hostVal == "" {
-		return buf.Bytes(), "", fmt.Errorf("no Host header found")
+		return httpRequestInfo{headerBytes: buf.Bytes()}, fmt.Errorf("no Host header found")
 	}
 
 	// buf has the bytes consumed by ReadSlice. br may have buffered
@@ -163,7 +192,39 @@ func peekHTTPHost(conn net.Conn) (headerBytes []byte, host string, err error) {
 		buf.Write(extra)
 	}
 
-	return buf.Bytes(), hostVal, nil
+	info.headerBytes = buf.Bytes()
+	info.host = hostVal
+	return info, nil
+}
+
+// injectProxyHeaders splices X-Forwarded-* headers into raw HTTP header
+// bytes, right before the terminal \r\n that ends the header block.
+func injectProxyHeaders(headerBytes []byte, remoteAddr, host string) []byte {
+	clientIP, _, _ := net.SplitHostPort(remoteAddr)
+	if clientIP == "" {
+		clientIP = remoteAddr
+	}
+
+	// Headers end with \r\n\r\n. Insert before the final \r\n.
+	idx := bytes.Index(headerBytes, headerTermSeq)
+	if idx < 0 {
+		return headerBytes
+	}
+
+	var buf bytes.Buffer
+	buf.Grow(len(headerBytes) + len(clientIP) + len(host) + 80)
+	buf.Write(headerBytes[:idx+2])
+	buf.WriteString("X-Forwarded-For: ")
+	buf.WriteString(clientIP)
+	buf.WriteString("\r\nX-Forwarded-Host: ")
+	buf.WriteString(host)
+	buf.WriteString("\r\nX-Forwarded-Proto: http\r\n")
+	buf.Write(headerBytes[idx+2:])
+	return buf.Bytes()
+}
+
+func writeHTTPError(w io.Writer, status, body string) {
+	fmt.Fprintf(w, "HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", status, len(body), body)
 }
 
 // prefixConn wraps a net.Conn with a different Reader that replays

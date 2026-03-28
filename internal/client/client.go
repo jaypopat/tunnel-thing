@@ -26,12 +26,18 @@ type Config struct {
 }
 
 type Client struct {
-	cfg    Config
-	routes map[string]string
+	cfg         Config
+	routes      map[string]string
+	stats       *stats
+	statsCancel context.CancelFunc
 }
 
 func New(cfg Config) *Client {
-	return &Client{cfg: cfg}
+	return &Client{
+		cfg:    cfg,
+		routes: make(map[string]string),
+		stats:  &stats{},
+	}
 }
 
 // Run connects to the server, authenticates, requests a tunnel, and proxies.
@@ -103,6 +109,15 @@ func (c *Client) Run(ctx context.Context) error {
 		)
 	}
 
+	// Cancel any previous stats goroutine (from a prior Run call).
+	if c.statsCancel != nil {
+		c.statsCancel()
+	}
+	statsCtx, statsCancel := context.WithCancel(ctx)
+	c.statsCancel = statsCancel
+	defer statsCancel()
+	go c.stats.Run(statsCtx)
+
 	var wg sync.WaitGroup
 	for {
 		stream, err := session.Accept()
@@ -152,6 +167,9 @@ func (c *Client) authenticate(controlStream net.Conn) error {
 
 func (c *Client) handleStream(stream net.Conn) {
 	defer stream.Close()
+
+	c.stats.connStart()
+	defer c.stats.connDone()
 
 	header, err := proto.ReadProxyHeader(stream)
 	if err != nil {

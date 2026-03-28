@@ -92,14 +92,44 @@ func TestPeekHTTPHost(t *testing.T) {
 				b.Write([]byte(tt.input))
 			}()
 
-			_, host, err := peekHTTPHost(a)
+			info, err := peekHTTPHost(a)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("peekHTTPHost: err=%v, wantErr=%v", err, tt.wantErr)
 			}
-			if host != tt.wantHost {
-				t.Errorf("peekHTTPHost host = %q, want %q", host, tt.wantHost)
+			if info.host != tt.wantHost {
+				t.Errorf("peekHTTPHost host = %q, want %q", info.host, tt.wantHost)
 			}
 		})
+	}
+}
+
+func TestInjectProxyHeaders(t *testing.T) {
+	input := "GET / HTTP/1.1\r\nHost: myapp.tunnel.dev\r\n\r\n"
+	got := string(injectProxyHeaders([]byte(input), "192.168.1.5:54321", "myapp.tunnel.dev"))
+
+	want := "GET / HTTP/1.1\r\nHost: myapp.tunnel.dev\r\n" +
+		"X-Forwarded-For: 192.168.1.5\r\n" +
+		"X-Forwarded-Host: myapp.tunnel.dev\r\n" +
+		"X-Forwarded-Proto: http\r\n" +
+		"\r\n"
+
+	if got != want {
+		t.Errorf("injectProxyHeaders:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestInjectProxyHeaders_WithBody(t *testing.T) {
+	input := "POST /api HTTP/1.1\r\nHost: api.tunnel.dev\r\nContent-Length: 5\r\n\r\nhello"
+	got := string(injectProxyHeaders([]byte(input), "10.0.0.1:9999", "api.tunnel.dev"))
+
+	want := "POST /api HTTP/1.1\r\nHost: api.tunnel.dev\r\nContent-Length: 5\r\n" +
+		"X-Forwarded-For: 10.0.0.1\r\n" +
+		"X-Forwarded-Host: api.tunnel.dev\r\n" +
+		"X-Forwarded-Proto: http\r\n" +
+		"\r\nhello"
+
+	if got != want {
+		t.Errorf("injectProxyHeaders with body:\n got: %q\nwant: %q", got, want)
 	}
 }
 
@@ -116,12 +146,18 @@ func TestPeekHTTPHost_ReturnsAllBytes(t *testing.T) {
 		b.Write([]byte(input))
 	}()
 
-	headerBytes, _, err := peekHTTPHost(a)
+	info, err := peekHTTPHost(a)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if string(headerBytes) != input {
-		t.Errorf("header bytes = %q, want %q", headerBytes, input)
+	if string(info.headerBytes) != input {
+		t.Errorf("header bytes = %q, want %q", info.headerBytes, input)
+	}
+	if info.method != "GET" {
+		t.Errorf("method = %q, want GET", info.method)
+	}
+	if info.path != "/hello" {
+		t.Errorf("path = %q, want /hello", info.path)
 	}
 }

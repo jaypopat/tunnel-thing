@@ -13,17 +13,16 @@ type ProxyHeader struct {
 }
 
 func WriteProxyHeader(w io.Writer, h ProxyHeader) error {
-	id := []byte(h.TunnelID)
-	if len(id) > 255 {
-		return fmt.Errorf("tunnel ID too long: %d bytes (max 255)", len(id))
+	if len(h.TunnelID) > 255 {
+		return fmt.Errorf("tunnel ID too long: %d bytes (max 255)", len(h.TunnelID))
 	}
 
-	buf := make([]byte, 2+len(id))
+	var buf [2 + 255]byte
 	buf[0] = Version
-	buf[1] = byte(len(id))
-	copy(buf[2:], id)
+	buf[1] = byte(len(h.TunnelID))
+	copy(buf[2:], h.TunnelID)
 
-	_, err := w.Write(buf)
+	_, err := w.Write(buf[:2+len(h.TunnelID)])
 	return err
 }
 
